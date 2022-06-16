@@ -40,7 +40,28 @@
 ;; Each field in punctuation-spec can be either a string (without any line breaks in it) *or* a
 ;; (linebreak ...) object.
 (define-record-type punctuation-spec
-  (header header-separator first-separator separator last-separator trailer-separator trailer))
+  (;; Content that is *always* inserted at the start of the node, even if it's empty
+   header
+
+   ;; Content that is inserted between the header and the first child. Ignored if the node is empty.
+   header-separator
+
+   ;; Overrides the separator between the first child and the second child. Does nothing if the node
+   ;; has less than two children.
+   first-separator
+
+   ;; Content that is inserted between children. Does nothing if the node has less than two children.
+   separator
+   
+   ;; Overrides the separator between the second-to-last child and the last child. Does nothing if the
+   ;; node has less than two children.
+   last-separator
+
+   ;; Content that is inserted between the last child and the trailer. Ignored if the node is empty.
+   trailer-separator
+
+   ;; Content that is *always* inserted at the start of this node, even if it's empty
+   trailer))
 
 
 (define one-line-s-expression-punctuation-spec
@@ -157,47 +178,6 @@
 ;;
 ;; Maybe we could have a way for the (return ...) node to state that it should "absorb"
 ;; children-of-children for indentation purposes?
-
-
-#|
-
-(define-record-type multiline-punctuation
-  (header header-separator first-separator separator last-separator trailer-separator trailer))
-
-(punctuation
-  #:header "("
-  #:header-separator ""
-  #:first-separator " "
-  #:separator
-    (linebreakable-punctuation
-      #:preline "" #:indentation 2 #:postline "" #:break-mode 'preferred)
-  #:last-separator ... same as separator ...
-  #:trailer-separator ""
-  #:trailer ")")
-
-
-(header
- header-separator
- first-separator
- separator
- last-separator
- trailer-separator
- trailer)
-
-(punctuation
-  #:header "("
-  #:header-separator ""
-  #:first-separator ... same as separator ...
-  #:separator
-    (linebreakable-punctuation
-      #:preline "" #:indentation 1 #:postline "" #:break-mode 'allowed)
-  #:last-separator ... same as separator ...
-  #:trailer-separator ""
-  #:trailer ")")
-
-
-|#
-
 
 
 (define (insert-between seq
