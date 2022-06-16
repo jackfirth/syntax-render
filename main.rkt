@@ -22,11 +22,141 @@
   (require rackunit))
 
 
-(define-enum-type linebreak-mode (disallowed discouraged allowed preferred required))
-(define-record-type linebreakable-punctuation (preline indentation postline break-mode))
+;; This is the tree structure that syntax objects should be turned into in order to render them.
+(struct content-tree () #:transparent)
 
-(define-record-type punctuation
+;; A node has children and a sequence of possible ways (punctuation specs) to combine them into a
+;; single string. The list of specs is in priority order: the first one should be tried before others
+;; are tried.
+(struct content-node (children punctuation-options) #:transparent)
+
+;; A leaf is just a (single line!) string.
+(struct content-leaf (text) #:transparent)
+
+
+;; This is a string that's broken across (possibly multiple) lines.
+(define-record-type linebreak (before-break after-break indentation))
+
+;; Each field in punctuation-spec can be either a string (without any line breaks in it) *or* a
+;; (linebreak ...) object.
+(define-record-type punctuation-spec
   (header header-separator first-separator separator last-separator trailer-separator trailer))
+
+
+(define one-line-s-expression-punctuation-spec
+  (punctuation-spec #:header "("
+                     #:header-separator ""
+                     #:first-separator " "
+                     #:separator " "
+                     #:last-separator " "
+                     #:trailer-separator ""
+                     #:trailer ")"))
+
+
+(define racket-default-s-expression-punctuation-options
+  (vector-immutable
+   one-line-s-expression-punctuation-spec
+   ;; Function name on first line, all arguments on next line
+   (punctuation-spec #:header "("
+                     #:header-separator ""
+                     #:first-separator (linebreak #:before-break "" #:after-break "" #:indentation 1)
+                     #:separator " "
+                     #:last-separator " "
+                     #:trailer-separator ""
+                     #:trailer ")")
+   ;; Function name and arguments all on separate lines
+   (punctuation-spec #:header "("
+                     #:header-separator ""
+                     #:first-separator (linebreak #:before-break "" #:after-break "" #:indentation 1)
+                     #:separator (linebreak #:before-break "" #:after-break "" #:indentation 1)
+                     #:last-separator (linebreak #:before-break "" #:after-break "" #:indentation 1)
+                     #:trailer-separator ""
+                     #:trailer ")")))
+
+
+(define racket-begin-like-keyword-punctuation-options
+  (vector-immutable
+   ;; All on separate lines (preferred)
+   (punctuation-spec #:header "("
+                     #:header-separator ""
+                     #:first-separator (linebreak #:before-break "" #:after-break "" #:indentation 2)
+                     #:separator (linebreak #:before-break "" #:after-break "" #:indentation 2)
+                     #:last-separator (linebreak #:before-break "" #:after-break "" #:indentation 2)
+                     #:trailer-separator ""
+                     #:trailer ")")
+   ;; All on same line (less common but still valid)
+   one-line-s-expression-punctuation-spec))
+
+
+(define racket-define-like-keyword-punctuation-options
+  (vector-immutable
+   ;; Everything on one line
+   one-line-s-expression-punctuation-spec
+   ;; Definition keyword and header on same line, remaining forms on separate lines
+   (punctuation-spec #:header "("
+                     #:header-separator ""
+                     #:first-separator " "
+                     #:separator (linebreak #:before-break "" #:after-break "" #:indentation 2)
+                     #:last-separator (linebreak #:before-break "" #:after-break "" #:indentation 2)
+                     #:trailer-separator ""
+                     #:trailer ")")))
+
+
+(define racket-lambda-like-keyword-punctuation-options
+  (vector-immutable
+   ;; Everything on one line
+   one-line-s-expression-punctuation-spec
+   ;; Lambda keyword and header on same line, remaining forms on separate lines
+   (punctuation-spec #:header "("
+                     #:header-separator ""
+                     #:first-separator " "
+                     #:separator (linebreak #:before-break "" #:after-break "" #:indentation 2)
+                     #:last-separator (linebreak #:before-break "" #:after-break "" #:indentation 2)
+                     #:trailer-separator ""
+                     #:trailer ")")
+   ;; All forms on separate lines, header indented further than body forms
+   (punctuation-spec #:header "("
+                     #:header-separator ""
+                     #:first-separator (linebreak #:before-break "" #:after-break "" #:indentation 4)
+                     #:separator (linebreak #:before-break "" #:after-break "" #:indentation 2)
+                     #:last-separator (linebreak #:before-break "" #:after-break "" #:indentation 2)
+                     #:trailer-separator ""
+                     #:trailer ")")))
+
+
+;; Can't express for/fold-like punctuation in this system directly.
+;; Maybe if instead of a separator, first separator, and last separator, we had a separator, a list
+;; of separator overrides starting from the beginning, and a list of separator overrides starting
+;; from the end. That would let for/fold override the first 2 separators to have more indentation,
+;; not just the first separator.
+
+
+;; There's no way to specify relative indentation yet. Maybe if the linebreak struct specified whether
+;; indentation was relative to the previous child or relative to the enclosing node's start. Also
+;; there isn't a way to "softly bypass" the parent node for a node up the chain. For instance, in this
+;; code:
+;;
+;; return foo(
+;;   x,
+;;   y)
+;;
+;; ...if the syntax tree looks like (return (foo x y)), there's no way for the (foo x y) node to state
+;; that its arguments should be indented relative to the start of the (return ...) node, not the
+;; (foo ...) node. So we'd only be able to indent it like this:
+;;
+;; return foo(
+;;          x,
+;;          y)
+;;
+;; Or like this:
+;;
+;; return
+;;   foo(
+;;     x,
+;;     y)
+;;
+;; Maybe we could have a way for the (return ...) node to state that it should "absorb"
+;; children-of-children for indentation purposes?
 
 
 #|
