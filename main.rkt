@@ -11,31 +11,45 @@
          rebellion/collection/vector
          rebellion/collection/vector/builder
          rebellion/private/guarded-block
+         rebellion/private/static-name
          rebellion/streaming/reducer
          rebellion/streaming/transducer
          rebellion/type/enum
          rebellion/type/record
-         syntax/parse)
+         syntax/parse
+         syntax-render/private/content-list
+         syntax-render/private/insert-between)
 
 
 (module+ test
   (require rackunit))
 
 
-;; This is the tree structure that syntax objects should be turned into in order to render them.
-(struct content-tree () #:transparent)
+;@----------------------------------------------------------------------------------------------------
 
-;; A node has children and a sequence of possible ways (punctuation specs) to combine them into a
-;; single string. The list of specs is in priority order: the first one should be tried before others
-;; are tried.
-(struct content-node (children punctuation-options) #:transparent)
 
 ;; A leaf is just a (single line!) string.
 (struct content-leaf (text) #:transparent)
 
 
-;; This is a string that's broken across (possibly multiple) lines.
-(define-record-type linebreak (before-break after-break indentation))
+;; A node has children and a sequence of possible ways (punctuation specs) to combine them into a
+;; single string. The list of specs is in priority order: the first one should be tried before others
+;; are tried.
+(struct content-node (children punctuation-options)
+  #:transparent
+  #:guard
+  (λ (children punctuation-options _)
+    (values (sequence->vector children) (sequence->vector punctuation-options))))
+
+
+(struct fixed-content-node (children punctuation)
+  #:transparent
+  #:guard (λ (children punctuation _) (values (sequence->vector children) punctuation)))
+
+
+(define (fixed-content #:punctuation spec . children)
+  (fixed-content-node children spec))
+        
 
 ;; Each field in punctuation-spec can be either a string (without any line breaks in it) *or* a
 ;; (linebreak ...) object.
@@ -66,45 +80,51 @@
 
 (define one-line-s-expression-punctuation-spec
   (punctuation-spec #:header "("
-                     #:header-separator ""
-                     #:first-separator " "
-                     #:separator " "
-                     #:last-separator " "
-                     #:trailer-separator ""
-                     #:trailer ")"))
+                    #:header-separator ""
+                    #:first-separator " "
+                    #:separator " "
+                    #:last-separator " "
+                    #:trailer-separator ""
+                    #:trailer ")"))
 
 
 (define racket-default-s-expression-punctuation-options
   (vector-immutable
    one-line-s-expression-punctuation-spec
    ;; Function name on first line, all arguments on next line
-   (punctuation-spec #:header "("
-                     #:header-separator ""
-                     #:first-separator (linebreak #:before-break "" #:after-break "" #:indentation 1)
-                     #:separator " "
-                     #:last-separator " "
-                     #:trailer-separator ""
-                     #:trailer ")")
+   (punctuation-spec
+    #:header "("
+    #:header-separator ""
+    #:first-separator (linebreak #:before-break "" #:after-break "" #:indentation 1 #:line-quantity 1)
+    #:separator " "
+    #:last-separator " "
+    #:trailer-separator ""
+    #:trailer ")")
    ;; Function name and arguments all on separate lines
-   (punctuation-spec #:header "("
-                     #:header-separator ""
-                     #:first-separator (linebreak #:before-break "" #:after-break "" #:indentation 1)
-                     #:separator (linebreak #:before-break "" #:after-break "" #:indentation 1)
-                     #:last-separator (linebreak #:before-break "" #:after-break "" #:indentation 1)
-                     #:trailer-separator ""
-                     #:trailer ")")))
+   (punctuation-spec
+    #:header "("
+    #:header-separator ""
+    #:first-separator (linebreak #:before-break "" #:after-break "" #:indentation 1 #:line-quantity 1)
+    #:separator (linebreak #:before-break "" #:after-break "" #:indentation 1 #:line-quantity 1)
+    #:last-separator (linebreak #:before-break "" #:after-break "" #:indentation 1 #:line-quantity 1)
+    #:trailer-separator ""
+    #:trailer ")")
+   ;; Can't yet support formatting where function and first argument are on one line and remaining
+   ;; arguments are each on separate lines indented to align with the first argument
+   ))
 
 
 (define racket-begin-like-keyword-punctuation-options
   (vector-immutable
    ;; All on separate lines (preferred)
-   (punctuation-spec #:header "("
-                     #:header-separator ""
-                     #:first-separator (linebreak #:before-break "" #:after-break "" #:indentation 2)
-                     #:separator (linebreak #:before-break "" #:after-break "" #:indentation 2)
-                     #:last-separator (linebreak #:before-break "" #:after-break "" #:indentation 2)
-                     #:trailer-separator ""
-                     #:trailer ")")
+   (punctuation-spec
+    #:header "("
+    #:header-separator ""
+    #:first-separator (linebreak #:before-break "" #:after-break "" #:indentation 2 #:line-quantity 1)
+    #:separator (linebreak #:before-break "" #:after-break "" #:indentation 2 #:line-quantity 1)
+    #:last-separator (linebreak #:before-break "" #:after-break "" #:indentation 2 #:line-quantity 1)
+    #:trailer-separator ""
+    #:trailer ")")
    ;; All on same line (less common but still valid)
    one-line-s-expression-punctuation-spec))
 
@@ -114,13 +134,14 @@
    ;; Everything on one line
    one-line-s-expression-punctuation-spec
    ;; Definition keyword and header on same line, remaining forms on separate lines
-   (punctuation-spec #:header "("
-                     #:header-separator ""
-                     #:first-separator " "
-                     #:separator (linebreak #:before-break "" #:after-break "" #:indentation 2)
-                     #:last-separator (linebreak #:before-break "" #:after-break "" #:indentation 2)
-                     #:trailer-separator ""
-                     #:trailer ")")))
+   (punctuation-spec
+    #:header "("
+    #:header-separator ""
+    #:first-separator " "
+    #:separator (linebreak #:before-break "" #:after-break "" #:indentation 2 #:line-quantity 1)
+    #:last-separator (linebreak #:before-break "" #:after-break "" #:indentation 2 #:line-quantity 1)
+    #:trailer-separator ""
+    #:trailer ")")))
 
 
 (define racket-lambda-like-keyword-punctuation-options
@@ -128,21 +149,23 @@
    ;; Everything on one line
    one-line-s-expression-punctuation-spec
    ;; Lambda keyword and header on same line, remaining forms on separate lines
-   (punctuation-spec #:header "("
-                     #:header-separator ""
-                     #:first-separator " "
-                     #:separator (linebreak #:before-break "" #:after-break "" #:indentation 2)
-                     #:last-separator (linebreak #:before-break "" #:after-break "" #:indentation 2)
-                     #:trailer-separator ""
-                     #:trailer ")")
+   (punctuation-spec
+    #:header "("
+    #:header-separator ""
+    #:first-separator " "
+    #:separator (linebreak #:before-break "" #:after-break "" #:indentation 2 #:line-quantity 1)
+    #:last-separator (linebreak #:before-break "" #:after-break "" #:indentation 2 #:line-quantity 1)
+    #:trailer-separator ""
+    #:trailer ")")
    ;; All forms on separate lines, header indented further than body forms
-   (punctuation-spec #:header "("
-                     #:header-separator ""
-                     #:first-separator (linebreak #:before-break "" #:after-break "" #:indentation 4)
-                     #:separator (linebreak #:before-break "" #:after-break "" #:indentation 2)
-                     #:last-separator (linebreak #:before-break "" #:after-break "" #:indentation 2)
-                     #:trailer-separator ""
-                     #:trailer ")")))
+   (punctuation-spec
+    #:header "("
+    #:header-separator ""
+    #:first-separator (linebreak #:before-break "" #:after-break "" #:indentation 4 #:line-quantity 1)
+    #:separator (linebreak #:before-break "" #:after-break "" #:indentation 2 #:line-quantity 1)
+    #:last-separator (linebreak #:before-break "" #:after-break "" #:indentation 2 #:line-quantity 1)
+    #:trailer-separator ""
+    #:trailer ")")))
 
 
 ;; Can't express for/fold-like punctuation in this system directly.
@@ -180,215 +203,158 @@
 ;; children-of-children for indentation purposes?
 
 
-(define (insert-between seq
-                        #:header [header #()]
-                        #:leading-separator [leading-separator #()]
-                        #:first-separator [first-separator #false]
-                        #:separator [separator #()]
-                        #:last-separator [last-separator #false]
-                        #:trailing-separator [trailing-separator #()]
-                        #:trailer [trailer #()])
-  (let* ([vec (sequence->vector seq)]
-         [header (sequence->vector header)]
-         [leading-separator (sequence->vector leading-separator)]
-         [separator (sequence->vector separator)]
-         [trailing-separator (sequence->vector trailing-separator)]
-         [trailer (sequence->vector trailer)]
-         [first-separator (if first-separator (sequence->vector first-separator) separator)]
-         [last-separator (if last-separator (sequence->vector last-separator) separator)])
-    (define num-elements (vector-length vec))
-    (cond
-      [(zero? num-elements)
-       (define size (+ (vector-length header) (vector-length trailer)))
-       (define builder (make-vector-builder #:expected-size size))
-       (vector-builder-add-all builder header)
-       (vector-builder-add-all builder trailer)
-       (build-vector builder)]
-      [(equal? num-elements 1)
-       (define size
-         (+ (vector-length header)
-            (vector-length leading-separator)
-            num-elements
-            (vector-length trailing-separator)
-            (vector-length trailer)))
-       (define builder (make-vector-builder #:expected-size size))
-       (vector-builder-add-all builder header)
-       (vector-builder-add-all builder leading-separator)
-       (vector-builder-add-all builder vec)
-       (vector-builder-add-all builder trailing-separator)
-       (vector-builder-add-all builder trailer)
-       (build-vector builder)]
-      [(equal? num-elements 2)
-       (define size
-         (+ (vector-length header)
-            (vector-length leading-separator)
-            num-elements
-            (vector-length first-separator)
-            (vector-length trailing-separator)
-            (vector-length trailer)))
-       (define builder (make-vector-builder #:expected-size size))
-       (vector-builder-add-all builder header)
-       (vector-builder-add-all builder leading-separator)
-       (vector-builder-add builder (vector-ref vec 0))
-       (vector-builder-add-all builder first-separator)
-       (vector-builder-add builder (vector-ref vec 1))
-       (vector-builder-add-all builder trailing-separator)
-       (vector-builder-add-all builder trailer)
-       (build-vector builder)]
-      [else
-       (define size
-         (+ (vector-length header)
-            (vector-length leading-separator)
-            (vector-length first-separator)
-            num-elements
-            (* (vector-length separator) (- num-elements 2))
-            (vector-length last-separator)
-            (vector-length trailing-separator)
-            (vector-length trailer)))
-       (define builder (make-vector-builder #:expected-size size))
-       (vector-builder-add-all builder header)
-       (vector-builder-add-all builder leading-separator)
-       (vector-builder-add builder (vector-ref vec 0))
-       (vector-builder-add-all builder first-separator)
-       (vector-builder-add builder (vector-ref vec 1))
-       (for ([v (in-vector vec 2 (sub1 num-elements))])
-         (vector-builder-add-all builder separator)
-         (vector-builder-add builder v))
-       (vector-builder-add-all builder last-separator)
-       (vector-builder-add builder (vector-ref vec (sub1 num-elements)))
-       (vector-builder-add-all builder trailing-separator)
-       (vector-builder-add-all builder trailer)
-       (build-vector builder)])))
+(define (content-tree-choose-layout tree #:column-count [column-count 102])
+  (match tree
+    [(? content-leaf?) tree]
+    [(content-node children punctuation-options)
+     (define last-spec-index (sub1 (vector-length punctuation-options)))
+     (define chosen-spec
+       (for/first
+           ([spec (in-vector punctuation-options 0 last-spec-index)]
+            #:when
+            (for/and
+                ([child (in-vector children)]
+                 [child-column-count
+                  (in-punctuation-child-start-column-counts spec #:column-count column-count)])
+              (content-tree-outermost-spec-satisfiable?
+               child spec #:column-count child-column-count)))
+         spec))
+     (cond
+       [chosen-spec
+        (define modified-children
+          (for/vector ([child (in-vector children)])
+            (content-tree-force-primary-layout child)))
+        (content-node modified-children (vector chosen-spec))]
+       [else
+        (define chosen-spec (vector-ref punctuation-options last-spec-index))
+        (define modified-children
+          (for/vector
+              ([child (in-vector children)]
+               [column-count
+                (in-punctuation-child-start-column-counts chosen-spec #:column-count column-count)])
+            (content-tree-choose-layout child #:column-count column-count)))
+        (content-node modified-children (vector chosen-spec))])]))
 
 
-(define (string-insert-between seq
-                               #:header [header #()]
-                               #:leading-separator [leading-separator #()]
-                               #:first-separator [first-separator #false]
-                               #:separator [separator #()]
-                               #:last-separator [last-separator #false]
-                               #:trailing-separator [trailing-separator #()]
-                               #:trailer [trailer #()])
-  (define chars
-    (insert-between
-     seq
-     #:header header
-     #:leading-separator leading-separator
-     #:first-separator first-separator
-     #:separator separator
-     #:last-separator last-separator
-     #:trailing-separator trailing-separator
-     #:trailer trailer))
-  (transduce chars #:into into-string))
+(define (content-tree-outermost-spec-satisfiable? tree #:column-count column-count)
+  (match tree
+    [(content-leaf text) (<= (string-length text) column-count)]
+    [(content-node children punctuation-options)
+     #false]))
 
 
-(define (strings-insert-between strings
-                                #:header [header ""]
-                                #:leading-separator [leading-separator ""]
-                                #:first-separator [first-separator #false]
-                                #:separator [separator ""]
-                                #:last-separator [last-separator #false]
-                                #:trailing-separator [trailing-separator ""]
-                                #:trailer [trailer ""])
-  (define modified-strings
-    (insert-between
-     strings
-     #:header (vector header)
-     #:leading-separator (vector leading-separator)
-     #:first-separator (and first-separator (vector first-separator))
-     #:separator (vector separator)
-     #:last-separator (and last-separator (vector last-separator))
-     #:trailing-separator (vector trailing-separator)
-     #:trailer (vector trailer)))
-  (string-join (vector->list modified-strings) ""))
+(define (content-tree-force-primary-layout tree)
+  tree)
+
+
+(define (in-punctuation-child-start-column-counts
+         spec #:column-count column-count #:child-count child-count)
+  '())
+
+
+
+
+
+(define (content-tree-try-rendering-children children spec #:column-count column-count)
+  #false)
+
+
+(define (content-tree-render-children children spec #:column-count column-count)
+  
+  "")
+
+
+(define (fixed-content-tree-render tree)
+  (define builder (make-content-list-builder))
+  (match tree
+    [(content-leaf text)
+     (content-list-builder-add builder text)
+     (build-content-list builder)]
+    [(fixed-content-node children punctuation)
+     (match-define
+       (punctuation-spec
+        #:header header
+        #:header-separator header-separator
+        #:first-separator first-separator
+        #:separator separator
+        #:last-separator last-separator
+        #:trailer-separator trailer-separator
+        #:trailer trailer)
+       punctuation)
+     (content-list-builder-add builder header)
+
+     (define (first? i)
+       (equal? i 0))
+
+     (define (second? i)
+       (equal? i 1))
+
+     (define (last? i)
+       (equal? i (sub1 (vector-length children))))
+
+     (for ([child (in-vector children)]
+           [i (in-naturals)])
+       (cond
+         [(first? i)
+          (content-list-builder-add builder header-separator)]
+         [(second? i)
+          (content-list-builder-add builder (or first-separator separator))]
+         [(last? i)
+          (content-list-builder-add builder (or last-separator separator))]
+         [else
+          (content-list-builder-add builder separator)])
+       (content-list-builder-add-subcontent builder (fixed-content-tree-render child))
+       (when (last? i)
+         (content-list-builder-add builder trailer-separator)))
+
+     (content-list-builder-add builder trailer)
+     (build-content-list builder)]))
 
 
 (module+ test
+  (test-case (name-string fixed-content-tree-render)
 
-  (test-case "basic separators"
-    (check-equal? (string-insert-between "hello" #:separator ", ") "h, e, l, l, o")
-    (check-equal? (string-insert-between "h" #:separator ", ") "h")
-    (check-equal? (string-insert-between "" #:separator ", ") ""))
+    (test-case "single leaf"
+      (define tree (content-leaf "foo"))
+      (define expected (content-list (list (content-line 0 "foo"))))
+      (check-equal? (fixed-content-tree-render tree) expected))
 
-  (test-case "headers and trailers"
-    (check-equal? (string-insert-between "hello" #:header "<" #:trailer ">") "<hello>")
-    (check-equal? (string-insert-between "h" #:header "<" #:trailer ">") "<h>")
-    (check-equal? (string-insert-between "" #:header "<" #:trailer ">") "<>"))
+    (test-case "single expression, one-line"
+      (define tree
+        (fixed-content
+         #:punctuation one-line-s-expression-punctuation-spec
+         (content-leaf "foo")
+         (content-leaf "x")
+         (content-leaf "y")
+         (content-leaf "z")))
+      (define expected (content-list (list (content-line 0 "(foo x y z)"))))
+      (check-equal? (fixed-content-tree-render tree) expected))
 
-  (test-case "leading separator"
-    (check-equal? (string-insert-between "hello" #:header "<" #:leading-separator "=") "<=hello")
-    (check-equal? (string-insert-between "h" #:header "<" #:leading-separator "=") "<=h")
-    (check-equal? (string-insert-between "" #:header "<" #:leading-separator "=") "<"))
-
-  (test-case "trailing separator"
-    (check-equal? (string-insert-between "hello" #:trailer ">" #:trailing-separator "=") "hello=>")
-    (check-equal? (string-insert-between "h" #:trailer ">" #:trailing-separator "=") "h=>")
-    (check-equal? (string-insert-between "" #:trailer ">" #:trailing-separator "=") ">"))
-
-  (test-case "first and last separators"
-    (check-equal?
-     (string-insert-between "hello" #:first-separator ":" #:separator "," #:last-separator ";")
-     "h:e,l,l;o")
-    (check-equal?
-     (string-insert-between "hel" #:first-separator ":" #:separator "," #:last-separator ";") "h:e;l")
-    (check-equal?
-     (string-insert-between "he" #:first-separator ":" #:separator "," #:last-separator ";") "h:e")
-    (check-equal?
-     (string-insert-between "h" #:first-separator ":" #:separator "," #:last-separator ";") "h")
-    (check-equal?
-     (string-insert-between "" #:first-separator ":" #:separator "," #:last-separator ";") ""))
-
-  (test-case "everything"
-    (check-equal?
-     (string-insert-between "hello"
-                            #:header "<"
-                            #:leading-separator "["
-                            #:first-separator ":"
-                            #:separator ","
-                            #:last-separator ";"
-                            #:trailing-separator "]"
-                            #:trailer ">")
-     "<[h:e,l,l;o]>")
-    (check-equal?
-     (string-insert-between "hel"
-                            #:header "<"
-                            #:leading-separator "["
-                            #:first-separator ":"
-                            #:separator ","
-                            #:last-separator ";"
-                            #:trailing-separator "]"
-                            #:trailer ">")
-     "<[h:e;l]>")
-    (check-equal?
-     (string-insert-between "he"
-                            #:header "<"
-                            #:leading-separator "["
-                            #:first-separator ":"
-                            #:separator ","
-                            #:last-separator ";"
-                            #:trailing-separator "]"
-                            #:trailer ">")
-     "<[h:e]>")
-    (check-equal?
-     (string-insert-between "h"
-                            #:header "<"
-                            #:leading-separator "["
-                            #:first-separator ":"
-                            #:separator ","
-                            #:last-separator ";"
-                            #:trailing-separator "]"
-                            #:trailer ">")
-     "<[h]>")
-    (check-equal?
-     (string-insert-between ""
-                            #:header "<"
-                            #:leading-separator "["
-                            #:first-separator ":"
-                            #:separator ","
-                            #:last-separator ";"
-                            #:trailing-separator "]"
-                            #:trailer ">")
-     "<>")))
+    (test-case "single expression, multi-line"
+      (define spec
+        (punctuation-spec
+         #:header "("
+         #:header-separator ""
+         #:first-separator #false
+         #:separator (linebreak #:before-break "" #:after-break "" #:indentation 1 #:line-quantity 1)
+         #:last-separator #false
+         #:trailer-separator ""
+         #:trailer ")"))
+      (define tree
+        (fixed-content
+         #:punctuation spec
+         (content-leaf "foo")
+         (content-leaf "x")
+         (content-leaf "y")
+         (content-leaf "z")))
+      (define expected
+        (content-list
+         (list
+          (content-line 0 "(foo")
+          (content-line 1 "x")
+          (content-line 1 "y")
+          (content-line 1 "z)"))))
+      (check-equal? (fixed-content-tree-render tree) expected))))
 
 
 (define (syntax-subcomponents stx)
